@@ -152,7 +152,7 @@ async def extract_invoice(request: InvoiceRequest):
 
         # Convert PDF to image
         try:
-            images = convert_from_path(file_path) #poppler_path=os.path.abspath(r'poppler-24.08.0\Library\bin')
+            images = convert_from_path(file_path,poppler_path=os.path.abspath('/usr/bin')
             if not images:
                 raise ValueError("No pages found in the uploaded PDF.")
             image = images[0]  # Use the first page
