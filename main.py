@@ -118,12 +118,21 @@ app = FastAPI(
 class InvoiceRequest(BaseModel):
     data: str  # Base64 encoded file content
     ext: str   # File extension
+    pages: Union[str, List[Union[str, int]]] = "ALL"  # Page selection parameter with default "ALL"
+
 
 @app.post("/extract", response_model=InvoiceData)
 async def extract_invoice(request: InvoiceRequest):
     """
     Extract structured data from an uploaded invoice image.
     Save the image locally for processing and delete it afterward.
+    
+    Page selection format:
+    - "ALL" - process all pages
+    - "1" - process only page 1
+    - "2-5" - process pages 2 through 5
+    - "2,5,7" - process pages 2, 5, and 7
+    - "1-5,7-10" - process pages 1-5 and 7-10
     """
     try:
         # Normalize and validate file extension
@@ -150,19 +159,35 @@ async def extract_invoice(request: InvoiceRequest):
         with open(file_path, "wb") as f:
             f.write(file_data)
 
-        # Convert PDF to image
+        # Process page selection parameter
+        selected_pages = parse_page_selection(request.pages)
+
+        # Convert PDF to image(s) based on page selection
         try:
-            images = convert_from_path(file_path,poppler_path='/usr/bin')
-            if not images:
+            all_images = convert_from_path(file_path, poppler_path=r'C:\Users\Lenovo-PC\Documents\GitHub\InvoiceDataExtraction\poppler-24.08.0\Library\bin')
+            if not all_images:
                 raise ValueError("No pages found in the uploaded PDF.")
-            image = images[0]  # Use the first page
+            
+            # Filter images based on page selection
+            if selected_pages == "ALL":
+                images = all_images
+            else:
+                # Convert to 1-based indexing for user-friendly page numbers
+                images = [all_images[i-1] for i in selected_pages if 0 < i <= len(all_images)]
+                
+            if not images:
+                raise HTTPException(status_code=400, detail="No valid pages were selected from the PDF.")
+            
+            # Process only the first selected page for now
+            # (You might want to expand this to handle multiple pages in the future)
+            image = images[0]
             image = image.resize((800, 800))  # Resize to reduce size
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=70)
             encoded_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
         except Exception as e:
             logger.error(f"Error converting PDF to image: {e}")
-            raise HTTPException(status_code=500, detail="Failed to process the uploaded PDF.")
+            raise HTTPException(status_code=500, detail=f"Failed to process the uploaded PDF: {str(e)}")
 
         # Send the base64-encoded image to the GPT API
         try:
@@ -187,11 +212,61 @@ async def extract_invoice(request: InvoiceRequest):
     finally:
         # Ensure the local file is deleted after processing
         try:
-            if os.path.exists(file_path):
+            if 'file_path' in locals() and os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"Temporary file {file_path} deleted successfully.")
         except Exception as cleanup_error:
             logger.error(f"Error deleting temporary file {file_path}: {cleanup_error}")
+
+def parse_page_selection(pages_param: Union[str, List[str]]) -> Union[str, List[int]]:
+    """
+    Parse the page selection parameter and return either "ALL" or a list of page numbers.
+    
+    Examples:
+    - "ALL" -> "ALL"
+    - "1" -> [1]
+    - "2-5" -> [2, 3, 4, 5]
+    - "2,5,7" -> [2, 5, 7]
+    - "1-3,5,7-9" -> [1, 2, 3, 5, 7, 8, 9]
+    """
+    # If it's already a list, convert string elements to integers
+    if isinstance(pages_param, list):
+        return [int(p) for p in pages_param if str(p).isdigit()]
+    
+    # If it's a string, parse it
+    if isinstance(pages_param, str):
+        # Check for "ALL" case (case-insensitive)
+        if pages_param.upper() == "ALL":
+            return "ALL"
+        
+        result = []
+        # Split by comma to handle different selections
+        selections = pages_param.split(',')
+        
+        for selection in selections:
+            selection = selection.strip()
+            
+            # Handle single page
+            if selection.isdigit():
+                result.append(int(selection))
+            # Handle range (e.g., "2-5")
+            elif '-' in selection:
+                try:
+                    start, end = map(int, selection.split('-'))
+                    if start <= end:
+                        result.extend(range(start, end + 1))
+                    else:
+                        logger.warning(f"Invalid range: {selection}. Start should be less than or equal to end.")
+                except ValueError:
+                    logger.warning(f"Invalid range format: {selection}")
+            else:
+                logger.warning(f"Ignoring invalid page selection: {selection}")
+                
+        return sorted(set(result))  # Sort and remove duplicates
+    
+    # Default to "ALL" if the format is unrecognized
+    logger.warning(f"Unrecognized pages parameter format: {pages_param}. Defaulting to ALL.")
+    return "ALL"
 
 def generate_prompt(image_base64: str) -> str:
     """
