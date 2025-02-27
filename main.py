@@ -12,6 +12,7 @@ import io
 import json
 import requests
 from pdf2image import convert_from_path
+from pathlib import Path
 from typing import Any, Union
 # Load environment variables
 load_dotenv()
@@ -26,6 +27,14 @@ openai.api_key = OPENAI_API_KEY
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Define the dynamic Poppler path
+# Get the directory where the script is located
+script_dir = Path(os.path.dirname(os.path.abspath(__file__)))
+# Define the poppler path relative to the script directory
+poppler_path = script_dir / "poppler-24.08.0" / "Library" / "bin"
+logger.info(f"Using Poppler path: {poppler_path}")
+
 
 # Define the JSON schema
 from typing import Any, Dict, List, Optional, Union
@@ -164,7 +173,8 @@ async def extract_invoice(request: InvoiceRequest):
 
         # Convert PDF to image(s) based on page selection
         try:
-            all_images = convert_from_path(file_path, poppler_path=r'C:\Users\Lenovo-PC\Documents\GitHub\InvoiceDataExtraction\poppler-24.08.0\Library\bin')
+            # Use the dynamic poppler path
+            all_images = convert_from_path(file_path, poppler_path=str(poppler_path))
             if not all_images:
                 raise ValueError("No pages found in the uploaded PDF.")
             
